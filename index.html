@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de Códigos de Barras (Librería/Remeras)</title>
+    <!-- Incluye Tailwind CSS para un estilo moderno y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilo para la fuente global y la legibilidad */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+            color: #333;
+            padding: 20px;
+        }
+        /* Estilos específicos para la sección de impresión */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #print-area, #print-area * {
+                visibility: visible;
+            }
+            #print-area {
+                /* Ajusta la posición del área de impresión */
+                position: absolute;
+                left: 0;
+                top: 0;
+                /* Asegura que el código de barras se vea bien */
+                page-break-after: always;
+            }
+            .no-print {
+                display: none;
+            }
+            /* Esconde el texto de 'print-area' cuando no es el código de barras */
+            #print-area p {
+                display: none;
+            }
+            /* Asegura que el SVG del código de barras se imprima correctamente */
+            #barcode-svg {
+                width: 100%;
+                height: auto;
+                margin-top: 50px;
+            }
+        }
+
+        /* Estilo para el botón de impresión para que se vea bien */
+        #print-button {
+            transition: all 0.2s;
+        }
+        #print-button:hover {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            transform: translateY(-1px);
+        }
+    </style>
+    <!-- Incluye la biblioteca JsBarcode para generar los códigos de barras -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+</head>
+<body class="min-h-screen flex items-start justify-center">
+
+    <div class="w-full max-w-2xl bg-white p-6 md:p-10 rounded-xl shadow-2xl space-y-6">
+        <header class="text-center pb-4 border-b border-gray-100">
+            <h1 class="text-3xl font-extrabold text-indigo-700">Generador de Códigos de Barras</h1>
+            <p class="text-gray-500 mt-1">Para Libros, Revistas y Playeras (Remeras)</p>
+        </header>
+
+        <!-- Controles de entrada -->
+        <div class="space-y-4 no-print">
+            <div>
+                <label for="barcode-input" class="block text-sm font-medium text-gray-700 mb-1">
+                    Código de Producto (EAN/ISBN/SKU)
+                </label>
+                <input type="text" id="barcode-input" maxlength="20" placeholder="Ej: 9781234567897 (EAN-13) o R-XL-AZUL-001 (CODE 128)"
+                       class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-lg">
+                <p class="text-xs text-gray-500 mt-1">Ingresa el código que deseas convertir en código de barras. Máximo 20 caracteres.</p>
+            </div>
+
+            <div>
+                <label for="barcode-type" class="block text-sm font-medium text-gray-700 mb-1">
+                    Tipo de Código de Barras
+                </label>
+                <select id="barcode-type"
+                        class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg">
+                    <option value="EAN13">EAN-13 (Ideal para ISBN/Libros)</option>
+                    <option value="CODE128" selected>CODE 128 (Flexible, ideal para SKUs de Remeras)</option>
+                </select>
+                <p class="text-xs text-gray-500 mt-1">EAN-13 requiere 12 o 13 dígitos. CODE 128 es más flexible con texto y números.</p>
+            </div>
+
+            <button onclick="generateBarcode()"
+                    class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                Generar Código de Barras
+            </button>
+        </div>
+
+        <!-- Área de Visualización y Imprimible -->
+        <div id="print-area" class="mt-8 text-center bg-gray-50 p-6 rounded-xl border border-dashed border-gray-300 min-h-[200px] flex flex-col justify-center items-center">
+            <p id="message" class="text-gray-400">Ingresa un código para generar tu etiqueta.</p>
+            <svg id="barcode-svg" class="w-full max-w-xs md:max-w-md h-auto"></svg>
+            <p id="barcode-text" class="text-xl font-mono mt-2 text-gray-800 break-words"></p>
+        </div>
+
+        <!-- Botón de Imprimir -->
+        <div class="no-print pt-4">
+            <button id="print-button" onclick="printBarcode()" disabled
+                    class="w-full flex justify-center py-3 px-4 rounded-lg text-sm font-medium text-white bg-green-500 disabled:bg-gray-400 hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                Imprimir Etiqueta (Preparado para Impresora)
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Configuración de las variables globales
+        const inputElement = document.getElementById('barcode-input');
+        const typeElement = document.getElementById('barcode-type');
+        const svgElement = document.getElementById('barcode-svg');
+        const messageElement = document.getElementById('message');
+        const printButton = document.getElementById('print-button');
+        const barcodeTextElement = document.getElementById('barcode-text');
+        const maxRetries = 3;
+        const retryDelayMs = 1000;
+
+        // Función de utilidad para manejar el backoff exponencial en peticiones fetch
+        async function fetchWithRetry(url, options, retries = 0) {
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response;
+            } catch (error) {
+                console.error(`Attempt ${retries + 1} failed:`, error.message);
+                if (retries < maxRetries) {
+                    const delay = retryDelayMs * Math.pow(2, retries);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return fetchWithRetry(url, options, retries + 1);
+                } else {
+                    throw new Error("Failed to fetch after maximum retries.");
+                }
+            }
+        }
+
+        // --- Lógica del Generador de Códigos de Barras ---
+
+        /**
+         * Genera y muestra el código de barras basado en la entrada del usuario.
+         */
+        function generateBarcode() {
+            const code = inputElement.value.trim();
+            const type = typeElement.value;
+
+            // Limpiar visualización anterior
+            svgElement.innerHTML = '';
+            barcodeTextElement.textContent = '';
+            printButton.disabled = true;
+
+            if (code === '') {
+                messageElement.textContent = 'Por favor, introduce un código de producto válido.';
+                messageElement.classList.remove('hidden');
+                return;
+            }
+
+            messageElement.classList.add('hidden');
+
+            try {
+                // Usar JsBarcode para renderizar el código en el elemento SVG
+                JsBarcode(svgElement, code, {
+                    format: type,           // EAN13 o CODE128
+                    displayValue: false,    // Oculta el texto numérico para poner el nuestro
+                    margin: 5,              // Margen alrededor del código
+                    width: 2,               // Ancho de las barras (más grande si es para imprimir)
+                    height: 100,            // Altura de las barras
+                    text: code,             // Usamos el código de entrada como texto
+                    fontSize: 18,           // Tamaño de la fuente para el texto
+                    textMargin: 0,          // Margen entre el texto y el código
+                    font: "monospace"       // Fuente para el texto
+                });
+
+                // Mostrar el texto asociado debajo del código SVG
+                barcodeTextElement.textContent = code;
+
+                // Habilitar el botón de impresión
+                printButton.disabled = false;
+
+                console.log(`Código de barras ${type} generado para: ${code}`);
+
+            } catch (error) {
+                // Mostrar un mensaje de error si el código es inválido para el tipo seleccionado
+                svgElement.innerHTML = ''; // Limpiar SVG si hay un error
+                messageElement.textContent = `Error al generar el código: ${error.message}. Por favor, verifica que el código sea válido para el formato ${type}.`;
+                messageElement.classList.remove('hidden');
+                printButton.disabled = true;
+                console.error("Error en JsBarcode:", error);
+            }
+        }
+
+        /**
+         * Llama a la función de impresión del navegador.
+         */
+        function printBarcode() {
+            if (!printButton.disabled) {
+                // Llama al método de impresión nativo del navegador.
+                window.print();
+            }
+        }
+
+        // Asignar el evento 'input' para que se genere dinámicamente al escribir
+        inputElement.addEventListener('input', generateBarcode);
+
+        // Generar un código de ejemplo al cargar la página
+        window.onload = function() {
+            inputElement.value = 'R-S-VERDE-123';
+            generateBarcode();
+            // Mostrar un mensaje de bienvenida
+            console.log("Aplicación de generador de códigos de barras cargada.");
+        };
+
+    </script>
+</body>
+</html>
